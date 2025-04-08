@@ -1,0 +1,7 @@
+README.md
+setup.py
+synctxasr.egg-info/PKG-INFO
+synctxasr.egg-info/SOURCES.txt
+synctxasr.egg-info/dependency_links.txt
+synctxasr.egg-info/requires.txt
+synctxasr.egg-info/top_level.txt

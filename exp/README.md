@@ -1,0 +1,1 @@
+- standard_eval.py: normal evaluation for whisper model
