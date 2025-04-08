@@ -15,6 +15,7 @@ model = AutoModelForCausalLM.from_pretrained(
 tokenizer = AutoTokenizer.from_pretrained(model_name)
 tokenizer.pad_token = tokenizer.eos_token
 
+target_output = 'It’s clear that the speaker was frustrated with their lack of competence and the lack of attention given to their work.'
 
 messages = [
     {
@@ -45,8 +46,56 @@ with torch.inference_mode():
     )
     
 
+print(outputs.shape )
+outputs = tokenizer.batch_decode(outputs)
+response = outputs[0].split("<start_of_turn>model\n")[-1].strip().split("<end_of_turn>")[0].strip()
 
-outputs = tokenizer.batch_decode(outputs)[0]
-response = outputs.split("<start_of_turn>model\n")[-1].strip().split("<end_of_turn>")[0].strip()
+print("Model's generated response:", response)
 
-print(response)
+# Now calculate loss for target output
+# Create messages with model response role including target output
+messages_with_target = messages.copy()
+messages_with_target.append({
+    "role": "assistant",
+    "content": [{"type": "text", "text": target_output}]
+})
+
+# Apply chat template for target sequence
+inputs_with_target = tokenizer.apply_chat_template(
+    messages_with_target,
+    tokenize=True,
+    return_tensors=None,
+).to(model.device)
+
+# Get input length to mask out in loss calculation
+prompt_length = inputs.input_ids.shape[1]
+
+# decoded = tokenizer.batch_decode(inputs_with_target[:,prompt_length-1:], skip_special_tokens=False)[0]
+# print("Decoded input with target:", decoded)
+# exit()
+
+# Set up for loss calculation
+with torch.inference_mode():
+    # Forward pass
+    outputs_with_target = model(inputs_with_target, labels=inputs_with_target)
+    
+    # Extract loss
+    loss = outputs_with_target.loss
+    
+    # For a more detailed analysis, calculate token-by-token loss
+    logits = outputs_with_target.logits[0, :-1, :]  # Shape: [sequence_length-1, vocab_size]
+    targets = inputs_with_target[0, 1:]  # Shape: [sequence_length-1]
+    
+    # Calculate per-token loss using cross entropy (only for tokens after the prompt)
+    loss_fct = torch.nn.CrossEntropyLoss(reduction='none')
+    token_losses = loss_fct(logits[prompt_length-1:], targets[prompt_length-1:])
+    
+    # Average loss for target tokens only
+    target_loss = token_losses.mean()
+
+print(f"Full sequence loss: {loss.item()}")
+print(f"Target output loss: {target_loss.item()}")
+
+# For comparison - calculate perplexity
+perplexity = torch.exp(target_loss)
+print(f"Perplexity for target output: {perplexity.item()}")
