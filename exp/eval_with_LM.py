@@ -17,7 +17,7 @@ def main(args):
     lm_model = AutoModelForCausalLM.from_pretrained(
         args.language_model,
         torch_dtype=torch.bfloat16,
-        attn_implementation="sdpa",
+        attn_implementation="flash_attention_2",
         device_map=None
     ).to(args.device)
     tokenizer = AutoTokenizer.from_pretrained(args.language_model)
@@ -79,6 +79,10 @@ def main(args):
                 print(f"Predicted History: {predicted_history}")
                 print(f"Second Result: {second_result['text']}")
                 print(f"Reference: {utt['text']}")
+                wer_initial = word_error_rate_detail([initial_text], [utt['text']], use_cer=False, normalize=True)[0]
+                wer_second = word_error_rate_detail([second_result['text']], [utt['text']], use_cer=False, normalize=True)[0]
+                print(f"WER Initial: {wer_initial*100:.2f}%", f"WER Second: {wer_second*100:.2f}%")
+
                 print('---------------------------------')
 
             cur_hyp += second_result['text'] + " "
@@ -97,7 +101,8 @@ if __name__ == "__main__":
     parser.add_argument('--dataset', type=str, default='tedlium3')
     parser.add_argument('--split', type=str, default='test')
     parser.add_argument('--whisper_model', type=str, default='tiny.en')
-    parser.add_argument('--language_model', type=str, default='/store/store4/data/huggingface_models/models--google--gemma-3-1b-it/snapshots/dcc83ea841ab6100d6b47a070329e1ba4cf78752')
+    #parser.add_argument('--language_model', type=str, default='/store/store4/data/huggingface_models/models--google--gemma-3-1b-it/snapshots/dcc83ea841ab6100d6b47a070329e1ba4cf78752')
+    parser.add_argument('--language_model', type=str, default='/store/store5/data/acp21rjf_checkpoints/synctxasr/grpo/b0/checkpoint-7000/')
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--strip_fullstop', action='store_true')
     parser.add_argument('--indexes', '-indexes', type=int, nargs='+', help='Indexes of the data to evaluate', default=[-1]) # -1 means all

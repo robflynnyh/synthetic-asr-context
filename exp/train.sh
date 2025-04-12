@@ -1,0 +1,1 @@
+NCCL_IB_DISABLE=1 CUDA_VISIBLE_DEVICES="1,2" python train_grpo.py
