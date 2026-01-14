@@ -1,0 +1,424 @@
+import argparse
+from tqdm import tqdm
+from synctxasr.data import dataset_functions
+from synctxasr.wer import word_error_rate_detail
+from synctxasr.misc import int_or_none
+
+from accelerate import Accelerator
+
+import torch
+import os
+from functools import partial
+import wandb
+from synctxasr.wer import word_error_rate_detail    
+import random
+#from faster_whisper import WhisperModel
+from madgrad import MADGRAD
+from itertools import chain, repeat
+from einops import repeat as einops_repeat
+from einops import rearrange
+from torch import nn
+from typing import Optional, Tuple, Union
+from torch.nn import CrossEntropyLoss
+import gc
+from transformers import WhisperForCausalLM
+import re
+
+
+
+from transformers.models.whisper import modeling_whisper
+class WhisperForConditionalGeneration(modeling_whisper.WhisperGenerationMixin, modeling_whisper.WhisperPreTrainedModel):
+    base_model_prefix = "model"
+    _tied_weights_keys = ["proj_out.weight"]
+
+    def __init__(self, config: modeling_whisper.WhisperConfig):
+        super().__init__(config)
+        self.model = modeling_whisper.WhisperModel(config)
+        self.proj_out = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.max_target_positions = config.max_target_positions
+
+        # Initialize weights and apply final processing
+        self.post_init()
+
+    def get_encoder(self):
+        return self.model.get_encoder()
+
+    def get_decoder(self):
+        return self.model.get_decoder()
+
+    def get_output_embeddings(self):
+        return self.proj_out
+
+    def set_output_embeddings(self, new_embeddings):
+        self.proj_out = new_embeddings
+
+    def get_input_embeddings(self) -> nn.Module:
+        return self.model.get_input_embeddings()
+
+    def freeze_encoder(self):
+        """
+        Calling this function will disable the gradient computation for the Whisper encoder so that its parameters will
+        not be updated during training.
+        """
+        self.model.encoder._freeze_parameters()
+
+    @modeling_whisper.add_start_docstrings_to_model_forward(modeling_whisper.WHISPER_INPUTS_DOCSTRING)
+    @modeling_whisper.replace_return_docstrings(output_type=modeling_whisper.Seq2SeqLMOutput, config_class=modeling_whisper._CONFIG_FOR_DOC)
+    def forward(
+        self,
+        input_features: Optional[torch.FloatTensor] = None,
+        attention_mask: Optional[torch.LongTensor] = None,
+        decoder_input_ids: Optional[torch.LongTensor] = None,
+        decoder_attention_mask: Optional[torch.LongTensor] = None,
+        head_mask: Optional[torch.Tensor] = None,
+        decoder_head_mask: Optional[torch.Tensor] = None,
+        cross_attn_head_mask: Optional[torch.Tensor] = None,
+        encoder_outputs: Optional[Tuple[Tuple[torch.FloatTensor]]] = None,
+        past_key_values: Optional[Union[modeling_whisper.EncoderDecoderCache, Tuple[torch.FloatTensor]]] = None,
+        decoder_inputs_embeds: Optional[Tuple[torch.FloatTensor]] = None,
+        decoder_position_ids: Optional[Tuple[torch.LongTensor]] = None,
+        labels: Optional[torch.LongTensor] = None,
+        use_cache: Optional[bool] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+        cache_position: Optional[torch.LongTensor] = None,
+    ) -> Union[Tuple[torch.Tensor], modeling_whisper.Seq2SeqLMOutput]:
+        r"""
+        labels (`torch.LongTensor` of shape `(batch_size, sequence_length)`, *optional*):
+            Labels for computing the language modeling loss. Indices should either be in `[0, ..., config.vocab_size]`
+            or -100 (see `input_ids` docstring). Tokens with indices set to `-100` are ignored (masked), the loss is
+            only computed for the tokens with labels in `[0, ..., config.vocab_size]`. `sequence_length` should be smaller than or equal to `config.max_target_positions`.
+
+        Returns:
+
+        Example:
+
+        ```python
+        >>> import torch
+        >>> from transformers import AutoProcessor, WhisperForConditionalGeneration
+        >>> from datasets import load_dataset
+
+        >>> processor = AutoProcessor.from_pretrained("openai/whisper-tiny.en")
+        >>> model = WhisperForConditionalGeneration.from_pretrained("openai/whisper-tiny.en")
+
+        >>> ds = load_dataset("hf-internal-testing/librispeech_asr_dummy", "clean", split="validation")
+
+        >>> inputs = processor(ds[0]["audio"]["array"], return_tensors="pt")
+        >>> input_features = inputs.input_features
+
+        >>> generated_ids = model.generate(inputs=input_features)
+
+        >>> transcription = processor.batch_decode(generated_ids, skip_special_tokens=True)[0]
+        >>> transcription
+        ' Mr. Quilter is the apostle of the middle classes, and we are glad to welcome his gospel.'
+        ```"""
+        return_dict = return_dict if return_dict is not None else self.config.use_return_dict
+
+        if labels is not None:
+            if labels.shape[1] > self.max_target_positions:
+                raise ValueError(
+                    f"Labels' sequence length {labels.shape[1]} cannot exceed the maximum allowed length of {self.max_target_positions} tokens."
+                )
+            if decoder_input_ids is None and decoder_inputs_embeds is None:
+                decoder_input_ids = modeling_whisper.shift_tokens_right(
+                    labels, self.config.pad_token_id, self.config.decoder_start_token_id
+                )
+
+        outputs = self.model(
+            input_features,
+            attention_mask=attention_mask,
+            decoder_input_ids=decoder_input_ids,
+            encoder_outputs=encoder_outputs,
+            decoder_attention_mask=decoder_attention_mask,
+            head_mask=head_mask,
+            decoder_head_mask=decoder_head_mask,
+            cross_attn_head_mask=cross_attn_head_mask,
+            past_key_values=past_key_values,
+            decoder_inputs_embeds=decoder_inputs_embeds,
+            decoder_position_ids=decoder_position_ids,
+            use_cache=use_cache,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+            cache_position=cache_position,
+        )
+        lm_logits = self.proj_out(outputs[0])
+
+        loss = None
+        if labels is not None:
+            loss_fct = CrossEntropyLoss(reduce=False, ignore_index=-100, reduction='none')
+            # move labels to correct device to enable PP
+            labels = labels.to(lm_logits.device)
+            # move labels to correct device to enable PP
+            loss = loss_fct(lm_logits.transpose(1, 2), labels)
+            
+
+        if not return_dict:
+            output = (lm_logits,) + outputs[1:]
+            return ((loss,) + output) if loss is not None else output
+
+        return modeling_whisper.Seq2SeqLMOutput(
+            loss=loss,
+            logits=lm_logits,
+            past_key_values=outputs.past_key_values,
+            decoder_hidden_states=outputs.decoder_hidden_states,
+            decoder_attentions=outputs.decoder_attentions,
+            cross_attentions=outputs.cross_attentions,
+            encoder_last_hidden_state=outputs.encoder_last_hidden_state,
+            encoder_hidden_states=outputs.encoder_hidden_states,
+            encoder_attentions=outputs.encoder_attentions,
+        )
+
+modeling_whisper.WhisperForConditionalGeneration = WhisperForConditionalGeneration
+from synctxasr.asr import get_whisper
+
+
+class CustomDataset(torch.utils.data.Dataset):
+    def __init__(self, file_paths):
+        self.file_paths = file_paths
+
+    def __len__(self):
+        return len(self.file_paths)
+
+    @staticmethod
+    def log_file_error(file_path):
+        print(f'Logging error for file: {file_path}')
+        with open('error_log.txt', 'a') as f:
+            f.write(f"{file_path}\n")
+
+
+    def __getitem__(self, idx):
+        try:
+            data = torch.load(self.file_paths[idx])
+        except EOFError as e: 
+            # want to prevent a single file corruption from crashing the entire training run
+            # so we catch the error pick a new random file and log the responsible file path so it can be deleted or fixed 
+            print(f"Error loading file {self.file_paths[idx]}: {e}")
+            self.log_file_error(self.file_paths[idx])
+            idx = torch.randint(0, len(self.file_paths), (1,)).item()
+            return self.__getitem__(idx)
+        
+        audio = data['waveform'].squeeze(0).numpy()
+        gold_text = data['text']
+        generation = data['generation']
+        wer = word_error_rate_detail([generation], [gold_text], use_cer=False, normalize=True)[0] * 100
+        history = data['previous_generation']
+        return {
+            'answer': gold_text,
+            'audio': audio,
+            'wer': wer,
+            'history': history,
+        }
+    
+def collator(batch, processor):
+    audio = [el['audio'] for el in batch]
+    gold_text = [el['answer'] for el in batch]
+    wers = [el['wer'] for el in batch]
+    history = [el['history'] for el in batch]
+    wer = torch.tensor(wers)
+    #print([el.shape for el in audio])
+    input_features = processor.feature_extractor(
+        audio,
+        return_tensors="pt",
+        sampling_rate=16_000,
+    )
+
+    return {
+        'input_features': input_features['input_features'],
+        'answer': gold_text,
+        'wer': wer,
+        'history': history,
+    }
+
+
+
+
+def train(args, model, processor, optim, dataloader):
+    save_every = 1000
+
+
+    for epoch in range(args.epochs):
+        for i, batch in enumerate(tqdm(dataloader)):
+            try:
+                audio = batch['input_features'].to(args.device)
+                gold_text = batch['answer']
+                old_wers = batch['wer']
+                history = batch['history']
+                with torch.no_grad():
+                    encoder_outputs = model.model.encoder(input_features=audio)
+      
+                    prompt_id_lists = [processor.get_prompt_ids(el, return_tensors=None) if el != None else [] for el in history]
+                    prompt_ids = [torch.tensor(el) for el in prompt_id_lists]
+                    prompt_ids = [el.to(args.device) for el in prompt_ids]
+                   
+                    decoder_ids, label_ids = [], []
+                    assert len(prompt_ids) == len(gold_text)
+                    for prompt, cur_trans in zip(prompt_id_lists, gold_text):
+                        transcript_ids = processor.tokenizer(cur_trans).input_ids
+              
+                        combined_ids = prompt + transcript_ids
+                      
+                        decoder_ids.append(combined_ids)
+                        label_ids.append([processor.tokenizer.pad_token_id] * len(prompt) + transcript_ids)
+
+                    decoder_padded = processor.tokenizer.pad(
+                        {"input_ids": decoder_ids},
+                        padding=True,
+                        return_tensors="pt",
+                    )
+                    decoder_label_padded = processor.tokenizer.pad(
+                        {"input_ids": label_ids},
+                        padding=True,
+                        return_tensors="pt",
+                    )["input_ids"]
+
+                    decoder_label_padded[decoder_label_padded == processor.tokenizer.pad_token_id] = -100
+                    decoder_label_padded = decoder_label_padded.to(args.device)
+                    mask = decoder_label_padded != -100
+                    
+                    decoder_input_ids = modeling_whisper.shift_tokens_right(
+                        decoder_padded['input_ids'].to(args.device), model.config.pad_token_id, model.config.decoder_start_token_id
+                    )
+
+                outputs = model(
+                    encoder_outputs=encoder_outputs, 
+                    decoder_input_ids=decoder_input_ids,
+                    decoder_attention_mask=decoder_padded['attention_mask'].to(args.device),
+                    labels=decoder_label_padded,
+                )
+
+                optim.zero_grad()
+                #print(outputs.loss[0])
+                # print(labels.shape)
+                # print(outputs.loss.shape)
+                # exit()
+                #print(outputs.loss)
+                loss = outputs.loss 
+                
+                loss = loss.sum() / mask.sum()
+                print(loss.item())
+
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 0.1)                
+                optim.step()
+
+                if i % save_every == 0 and i > 0:
+                    try:
+                        # remove dir if exists
+                        model.save_pretrained(f"/store/store5/data/acp21rjf_checkpoints/synctxasr/whisper/0/whisper-tiny-finetuned_{i}")
+                        processor.save_pretrained(f"/store/store5/data/acp21rjf_checkpoints/synctxasr/whisper/0/whisper-tiny-finetuned_{i}")
+                    except Exception as e:
+                        print(f"Error saving model: {e}")
+                        continue
+
+            except RuntimeError as e:
+                if "out of memory" in str(e):
+                    print("Out of memory error, skipping batch")
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    continue
+                elif "invalid for input" in str(e):
+                    print("Invalid input error, skipping batch")
+                    torch.cuda.empty_cache()
+                    gc.collect()
+                    continue
+                else:
+                    raise e
+                
+    print("Training complete")
+    # Save the model
+    model.save_pretrained("/store/store5/data/acp21rjf_checkpoints/synctxasr/whisper/0/whisper-tiny-finetuned")
+    processor.save_pretrained("/store/store5/data/acp21rjf_checkpoints/synctxasr/whisper/0/whisper-tiny-finetuned")
+    # Save the processor
+    # Save the tokenizer
+
+
+
+
+           
+            #print(outputs.logits.shape)
+
+
+def get_dataset(args, max_files=-1): # preload all text
+    dataset = []
+    for path in args.dataset_paths:
+        if not os.path.exists(path):
+            raise ValueError(f"Dataset path {path} does not exist.")
+        files = os.listdir(path)
+        for i, file_path in enumerate(tqdm(files)):
+            if max_files > 0 and i > max_files: break
+            full_file_path = os.path.join(path, file_path)
+            dataset.append(full_file_path)
+    dataset = CustomDataset(dataset)
+    return dataset
+
+def get_training_modules(model):
+    # we are only training the feedforward fc1 layers
+    for param in model.parameters():
+        param.requires_grad = False
+
+    params = []
+    decoder_layers = model.model.decoder.layers
+    for layer in decoder_layers:
+
+        for param in layer.self_attn.parameters():
+            param.requires_grad = True
+        params.extend(layer.self_attn.parameters())
+  
+    return params
+
+
+def main(args):
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+
+    train_dataset = get_dataset(args)
+
+    processor, model = get_whisper(args.whisper_model, device=args.device)
+
+
+    
+    optim = MADGRAD(
+        get_training_modules(model),
+        lr=args.lr,
+    )
+
+    dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        batch_size=args.batch_size,
+        collate_fn=partial(collator, processor=processor),
+        num_workers=8,
+        pin_memory=False,
+    )
+
+    train(args, model, processor, optim, dataloader)
+
+
+
+if __name__ == "__main__":
+
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--device', type=str, default='cuda')
+
+    parser.add_argument('--dataset_paths', nargs='+', type=str, default=[
+        '/store/store4/data/TEDLIUM3_Whisper_tiny_en_outputs/train',
+        # '/store/store4/data/LIBRISPEECH_Whisper_tiny_en_outputs/train_other/train-other-500/',
+        # '/store/store4/data/LIBRISPEECH_Whisper_tiny_en_outputs/train_clean_100/train-clean-100/'
+    ])
+    
+    parser.add_argument('--no_wandb', action='store_true', help='Disable wandb logging')
+    parser.add_argument('--batch_size', type=int, default=32) # 32
+    parser.add_argument('--lr', type=float, default=1e-6)
+    parser.add_argument('--output_dir', type=str, default='/store/store5/data/acp21rjf_checkpoints/synctxasr/grpo/b3')
+    parser.add_argument('--epochs', type=int, default=1)
+    parser.add_argument('--gradient_accumulation_steps', type=int, default=2) # 1
+    parser.add_argument('--local-rank', type=int, default=0)
+    parser.add_argument('--whisper_model', type=str, default='openai/whisper-tiny.en')
+    parser.add_argument('--whisper-device', type=str, default='cuda:1') # cuda:1
+    parser.add_argument('--use_prompts', action='store_true', help='Use prompts for the LM')
+
+    args = parser.parse_args()    
+    if not torch.cuda.is_available(): args.device = 'cpu'
+
+    main(args)

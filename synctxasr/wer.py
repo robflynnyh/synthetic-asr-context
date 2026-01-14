@@ -39,6 +39,8 @@ def word_error_rate_detail(
         hypotheses = [normalizer(h) for h in hypotheses]
         references = [normalizer(r) for r in references]
 
+    words_ref = 0.0
+    words_hyp = 0.0
     for h, r in zip(hypotheses, references):
         if use_cer:
             h_list = list(h)
@@ -46,6 +48,8 @@ def word_error_rate_detail(
         else:
             h_list = h.split()
             r_list = r.split()
+        words_ref += len(r_list)
+        words_hyp += len(h_list)
 
         # To get rid of the issue that jiwer does not allow empty string
         if len(r_list) == 0:
@@ -73,6 +77,10 @@ def word_error_rate_detail(
         ins_rate = 1.0 * ops_count['insertions'] / words
         del_rate = 1.0 * ops_count['deletions'] / words
         sub_rate = 1.0 * ops_count['substitutions'] / words
+    elif words_ref == 0 and words_hyp == 0:
+        wer, ins_rate, del_rate, sub_rate = 0.0, 0.0, 0.0, 0.0
+    elif words_ref == 0 and words_hyp != 0:
+        wer, ins_rate, del_rate, sub_rate = 1.0, float('inf'), float('inf'), float('inf')
     else:
         wer, ins_rate, del_rate, sub_rate = float('inf'), float('inf'), float('inf'), float('inf')
 

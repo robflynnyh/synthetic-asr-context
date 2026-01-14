@@ -4,12 +4,17 @@ from synctxasr.data import dataset_functions
 from synctxasr.wer import word_error_rate_detail
 from synctxasr.misc import int_or_none
 import whisper
+import torch
+import random
+import re
+
 
 
 def main(args):
 
     asr_model = whisper.load_model(args.whisper_model)
 
+    assert args.dataset in dataset_functions, f"Dataset {args.dataset} not found, available datasets: {list(dataset_functions.keys())}"
     dataset_fn = dataset_functions[args.dataset]
     dataset = dataset_fn(args.split)
 
@@ -18,6 +23,8 @@ def main(args):
     
     hyps = []
     refs = []
+    recording_ids = []
+    individual_wers = {}
     
     for i, index in enumerate(indexes):
         recording = dataset[index]
@@ -30,17 +37,20 @@ def main(args):
         for utt_idx, utt in enumerate(tqdm(utterances)):
             waveform = utt['waveform'].squeeze(0)
 
-
             #previous_text = None if utt_idx == 0 else utterances[-1]['text'] 
             prev_end_utt = None if utt_idx == 0 else utterances[utt_idx - 1]['end']
             cur_start_utt = utt['start']
-            if (prev_end_utt is not None and cur_start_utt - prev_end_utt > 1.0):
+            if (prev_end_utt is not None and cur_start_utt - prev_end_utt > 2.0):
                 previous_text = None
+
+            if previous_text is not None:
+                previous_text = re.sub(r"<[^>]*>", "", previous_text).strip()
+
             
             result = asr_model.transcribe(
                 audio=waveform, 
                 initial_prompt=previous_text, 
-                without_timestamps=True, 
+                without_timestamps=not args.use_timestamps, 
                 language='en', 
                 task='transcribe',
                 beam_size=args.beam_size,
@@ -49,34 +59,59 @@ def main(args):
             if args.use_history and not args.use_gold_history:
                 previous_text = result['text'].strip()
                 if previous_text == "": previous_text = None
-                elif previous_text[-1] == '.': previous_text = previous_text[:-1] # IMPORTANT!
+                elif previous_text[-1] == '.' and args.strip_fullstop:
+                    previous_text = previous_text[:-1] # IMPORTANT!
+
+                # previous_text = previous_text.split(" ")
+                # random.shuffle(previous_text)
+                # previous_text = " ".join(previous_text)
+                # previous_text = previous_text.strip()
+                    
             elif args.use_gold_history and utt_idx > 0:
                 previous_text = utterances[utt_idx - 1]['text'].strip()
                 previous_end = utterances[utt_idx - 1]['end']
                 current_start = utt['start']
                 if previous_text == "": previous_text = None
-                if current_start - previous_end > 1.0: previous_text = None # Drop history if there is too much of a gap
+                if current_start - previous_end > 2.0: previous_text = None # Drop history if there is too much of a gap
             
 
             cur_hyp += result['text'] + " "
             cur_ref += utt['text'] + " "
+        
+        cur_hyp = cur_hyp.strip()
+        cur_ref = cur_ref.strip()
+        hyps.append(cur_hyp)
+        refs.append(cur_ref)
+        recording_ids.append(recording['id'])
+        cur_wer = word_error_rate_detail([cur_hyp], [cur_ref], use_cer=False, normalize=True)[0]
+        print(f"Recording {recording['id']}: WER: {cur_wer*100:.3f}")
+        individual_wers[recording['id']] = cur_wer
 
-        hyps.append(cur_hyp.strip())
-        refs.append(cur_ref.strip())
 
-    wer = word_error_rate_detail(hyps, refs, use_cer=False, normalize=True)
-    print(wer)
-          
+    wer = word_error_rate_detail(hyps, refs, use_cer=False, normalize=True)[0]
+    print(f'Overall WER: {wer*100:.3f}')
+
+    if args.save_path is not None:
+        torch.save({
+            'hyps': hyps,
+            'refs': refs,
+            'recording_ids': recording_ids,
+            'individual_wers': individual_wers,
+            'wer': wer
+        }, args.save_path)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--use_history', action='store_true')
     parser.add_argument('--use_gold_history', action='store_true')
+    parser.add_argument('--use_timestamps', action='store_true')
     parser.add_argument('--beam_size', type=int_or_none, default=5)
     parser.add_argument('--dataset', type=str, default='tedlium3')
     parser.add_argument('--split', type=str, default='test')
     parser.add_argument('--whisper_model', type=str, default='tiny.en')
     parser.add_argument('--indexes', '-indexes', type=int, nargs='+', help='Indexes of the data to evaluate', default=[-1]) # -1 means all
+    parser.add_argument('--save_path', type=str, default=None)
+    parser.add_argument('--strip_fullstop', action='store_true')
 
     args = parser.parse_args()
 

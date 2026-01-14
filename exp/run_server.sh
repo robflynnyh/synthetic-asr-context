@@ -1,1 +1,1 @@
-NCCL_IB_DISABLE=1 VLLM_USE_V1=0 CUDA_VISIBLE_DEVICES="3" trl vllm-serve --model "/store/store4/data/huggingface_models/models--meta-llama--Llama-3.2-1B-Instruct/snapshots/9213176726f574b556790deb65791e0c5aa438b6" --gpu-memory-utilization 0.95  
+NCCL_IB_DISABLE=1 VLLM_USE_V1=0 CUDA_VISIBLE_DEVICES="3" trl vllm-serve --model "/store/store4/data/huggingface_models/models--Qwen--Qwen2.5-0.5B-Instruct/snapshots/7ae557604adf67be50417f59c2c2f167def9a775" --gpu-memory-utilization 0.95  

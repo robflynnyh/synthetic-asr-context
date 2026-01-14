@@ -1,5 +1,0 @@
-[default]
-entity = wobrob101
-project = synctxasr
-base_url = https://api.wandb.ai
-

@@ -54,7 +54,10 @@ def generate_lm_response(transcription:str, model:AutoModelForCausalLM, tokenize
             **inputs,
             pad_token_id=tokenizer.eos_token_id,
             max_new_tokens=512,
-            #temperature=1.5,
+            temperature=0.9,
+            top_p=0.95,
+            do_sample=True,
+            top_k=50,
         )
         
     outputs = tokenizer.batch_decode(outputs)[0]

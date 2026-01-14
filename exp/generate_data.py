@@ -28,6 +28,24 @@ def main(args):
 
         for utt_idx, utt in enumerate(tqdm(utterances)):
             waveform = utt['waveform'].squeeze(0)
+
+            full_save_path = os.path.join(args.save_path, f"{recording['id']}_{utt_idx}.pt")
+            next_save_path = os.path.join(args.save_path, f"{recording['id']}_{utt_idx + 1}.pt")
+            if utt_idx == len(utterances) - 1: next_save_path = full_save_path
+            if os.path.exists(full_save_path): # for previous
+                print(f"Utterance {recording['id']}_{utt_idx} already exists, skipping...")
+                if not os.path.exists(next_save_path):
+                    result = asr_model.transcribe(
+                        audio=waveform, 
+                        initial_prompt=None, 
+                        without_timestamps=True, 
+                        language='en', 
+                        task='transcribe',
+                        beam_size=args.beam_size,
+                    )
+                    utt['generation'] = result['text'].strip()  
+                
+                continue
             
             result = asr_model.transcribe(
                 audio=waveform, 
@@ -53,8 +71,12 @@ def main(args):
                 utt['previous_gold_text'] = utterances[utt_idx - 1]['text'].strip()
 
             # Save the utterance
-            save_utterance(utt, args.save_path)
-
+            try:
+                save_utterance(utt, args.save_path)
+            except Exception as e:
+                print(f"Error saving utterance {utt['rec_id']}_{utt['utt_idx']}: {e}")
+                print(utt.keys())
+                continue
         
 
 if __name__ == "__main__":

@@ -1,0 +1,15 @@
+{"time":"2025-04-26T09:40:52.213315726Z","level":"INFO","msg":"stream: starting","core version":"0.19.9","symlink path":"/exp/exp4/acp21rjf/synthetic-asr-context/exp/wandb/run-20250426_094052-uibwtusy/logs/debug-core.log"}
+{"time":"2025-04-26T09:40:52.571156504Z","level":"INFO","msg":"created new stream","id":"uibwtusy"}
+{"time":"2025-04-26T09:40:52.571229852Z","level":"INFO","msg":"stream: started","id":"uibwtusy"}
+{"time":"2025-04-26T09:40:52.571283463Z","level":"INFO","msg":"writer: Do: started","stream_id":"uibwtusy"}
+{"time":"2025-04-26T09:40:52.571326875Z","level":"INFO","msg":"handler: started","stream_id":"uibwtusy"}
+{"time":"2025-04-26T09:40:52.571352824Z","level":"INFO","msg":"sender: started","stream_id":"uibwtusy"}
+{"time":"2025-04-26T09:40:52.763434187Z","level":"INFO","msg":"Starting system monitor"}
+{"time":"2025-04-26T15:56:25.578062521Z","level":"INFO","msg":"stream: closing","id":"uibwtusy"}
+{"time":"2025-04-26T15:56:25.578118607Z","level":"INFO","msg":"Stopping system monitor"}
+{"time":"2025-04-26T15:56:25.578171146Z","level":"INFO","msg":"Stopped system monitor"}
+{"time":"2025-04-26T15:56:26.972273495Z","level":"INFO","msg":"fileTransfer: Close: file transfer manager closed"}
+{"time":"2025-04-26T15:56:27.273649714Z","level":"INFO","msg":"handler: closed","stream_id":"uibwtusy"}
+{"time":"2025-04-26T15:56:27.273701952Z","level":"INFO","msg":"writer: Close: closed","stream_id":"uibwtusy"}
+{"time":"2025-04-26T15:56:27.273740766Z","level":"INFO","msg":"sender: closed","stream_id":"uibwtusy"}
+{"time":"2025-04-26T15:56:27.273876071Z","level":"INFO","msg":"stream: closed","id":"uibwtusy"}
