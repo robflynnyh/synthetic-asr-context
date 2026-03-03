@@ -6,7 +6,13 @@ from synctxasr.wer import word_error_rate_detail
 import torch
 from synctxasr.misc import int_or_none
 from synctxasr.asr import get_whisper, generate_with_whisper
+import random
 
+
+def shuffle_text(text:str) -> str:
+    words = text.split()
+    random.shuffle(words)
+    return " ".join(words)
 
 def main(args):
     device = torch.device(args.device)
@@ -95,8 +101,14 @@ def main(args):
             prev_history = transcription[i].strip()
             # if prev_history.endswith('...'):
             #     prev_history = prev_history[:-3]
+
+            if args.shuffle_history:
+                prev_history = shuffle_text(prev_history)
+                
             if args.strip_fullstop and prev_history.endswith('.'):
                 prev_history = prev_history[:-1]
+            if args.uppercase_history:
+                prev_history = prev_history.upper()
             history[idx].append(prev_history)
 
         pbar.update(1)
@@ -128,6 +140,8 @@ if __name__ == "__main__":
     parser.add_argument('--return_timestamps', action='store_true')
     parser.add_argument('--prev_utterances', type=int, default=-1, help='Number of previous utterances to use as context. -1 means all previous utterances.')
     parser.add_argument('--reset_history_on_pause', action='store_true', help='Reset history if there is a long pause between utterances.')
+    parser.add_argument('--shuffle_history', action='store_true', help='Shuffle the words in the history to test robustness.')
+    parser.add_argument('--uppercase_history', action='store_true', help='Uppercase the history to test robustness.')
     args = parser.parse_args()
 
     if not torch.cuda.is_available(): args.device = 'cpu' # force cpu if no cuda available

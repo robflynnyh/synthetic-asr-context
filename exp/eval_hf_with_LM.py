@@ -8,6 +8,7 @@ from synctxasr.misc import int_or_none
 from synctxasr.asr import get_whisper, generate_with_whisper
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from synctxasr.lm import generate_lm_response
+import re
 
 def main(args):
     device = torch.device(args.device)
@@ -53,6 +54,7 @@ def main(args):
     hyps = {k:"" for k in range(len(recordings))}
     refs = {k:"" for k in range(len(recordings))}
     history = {k:[] for k in range(len(recordings))}
+    end_times = {k:0 for k in range(len(recordings))}
 
     pbar = tqdm(total=max_steps, desc="Processing", unit="step")
     while all(finished_recording) == False:
@@ -68,9 +70,16 @@ def main(args):
                 finished_recording[i] = True
                 continue
             cur_refs.append(recording[step]['text'])
-         
             cur_audio.append(recording[step]['waveform'].squeeze(0).numpy())
-            if args.use_history: initial_prompts.append(history[i][-1] if len(history[i]) > 0 else None)
+            start_time, end_time = recording[step]['start'], recording[step]['end']
+            if (start_time - end_times[i] > 2.0) and args.reset_history_on_pause:
+                history[i] = [] # reset history if a long pause
+            end_times[i] = end_time
+    
+            history_size = len(history[i]) if args.prev_utterances == -1 else min(args.prev_utterances, len(history[i]))
+            if args.use_history and args.prev_utterances != 0:
+                if args.prev_utterances != 0:
+                    initial_prompts.append(" ".join(history[i][-history_size:]) if len(history[i]) > 0 else None)
             else: initial_prompts.append(None)
             indexes.append(i)
 
@@ -87,7 +96,14 @@ def main(args):
             max_batch_size=1,
         )
         lm_prompts = []
-        for i_trans in initial_transcription: lm_prompts.append(generate_lm_response(i_trans, lm_model, tokenizer, args.device))
+        for i_trans in initial_transcription: 
+            full_prompt = ""
+            for i in range(args.prev_utterances):
+                prompt = generate_lm_response(i_trans, lm_model, tokenizer, args.device)
+                prompt = re.sub(r"<[^>]*>", "", prompt).strip()
+                full_prompt += " " + prompt
+            lm_prompts.append(full_prompt.strip())
+         
         print(f"LM prompts: {lm_prompts}")
         print(f"Initial transcription: {initial_transcription}")
 
@@ -138,7 +154,9 @@ if __name__ == "__main__":
     parser.add_argument('--log_path', type=str, default=None)   
     parser.add_argument('--strip_fullstop', action='store_true', help='Strip fullstop from the history')
     parser.add_argument('--checkpoint', type=str, default=None)
-    parser.add_argument('--language_model', type=str, default='/store/store5/data/acp21rjf_checkpoints/synctxasr/grpo/b0/checkpoint-2000/')
+    parser.add_argument('--prev_utterances', type=int, default=1, help='Number of previous utterances to use as context. -1 means all previous utterances.')
+    parser.add_argument('--reset_history_on_pause', action='store_true', help='Reset history if there is a long pause between utterances.')
+    parser.add_argument('--language_model', type=str, default='/store/store5/data/acp21rjf_checkpoints/synctxasr/grpo/b0/checkpoint-1000/')
     args = parser.parse_args()
 
     if not torch.cuda.is_available(): args.device = 'cpu' # force cpu if no cuda available

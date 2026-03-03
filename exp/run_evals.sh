@@ -1,48 +1,60 @@
 #!/bin/bash
+# GPU_ID=1 WHISPER_MODEL=openai/whisper-large-v3-turbo LOG_PREFIX=turbo_caps bash run_evals.sh
+# CAPS-history eval sweep
+# Runs context lengths 1..23 for each dataset using --uppercase_history.
 
-# export PYTHONPATH=$PYTHONPATH:.
-# export PYTHONPATH=$PYTHONPATH:../
+PYTHON_BIN=${PYTHON_BIN:-python3.10}
+GPU_ID=${GPU_ID:-2}
+OUT_DIR=${OUT_DIR:-./results_history}
+WHISPER_MODEL=${WHISPER_MODEL:-openai/whisper-tiny.en}
+LOG_PREFIX=${LOG_PREFIX:-}
+START_UTTERANCES=${START_UTTERANCES:-1}
+END_UTTERANCES=${END_UTTERANCES:-23}
 
+if [ -n "$LOG_PREFIX" ]; then
+  LOG_PREFIX="${LOG_PREFIX}_"
+fi
 
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset tedlium3 --split test --prev_utterances 6 --log_path ./results_history/ted_history_6.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential --dataset tedlium3 --split test --prev_utterances 7 --log_path ./results_history/ted_history_7.txt
-echo 1
+if [ "$START_UTTERANCES" -gt "$END_UTTERANCES" ]; then
+  echo "START_UTTERANCES must be <= END_UTTERANCES"
+  exit 1
+fi
 
+mkdir -p "$OUT_DIR"
 
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset librispeech --split test-other --prev_utterances 6  --log_path ./results_history/LS_history_6.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history  --sequential --dataset librispeech --split test-other --prev_utterances 7  --log_path ./results_history/LS_history_7.txt
-echo 2
+for k in $(seq "$START_UTTERANCES" "$END_UTTERANCES"); do
+  echo "${k}/${END_UTTERANCES} on tedlium3"
+  CUDA_VISIBLE_DEVICES="$GPU_ID" "$PYTHON_BIN" eval_hf.py \
+    --use_history --sequential \
+    --dataset tedlium3 --split test \
+    --whisper_model "$WHISPER_MODEL" \
+    --prev_utterances "$k" \
+    --uppercase_history \
+    --log_path "$OUT_DIR/${LOG_PREFIX}ted_history_caps_${k}.txt"
+done
+echo "Finished tedlium3"
 
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset gigaspeech --split test --prev_utterances 6  --log_path ./results_history/GS_history_6.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history  --sequential --dataset gigaspeech --split test --prev_utterances 7  --log_path ./results_history/GS_history_7.txt
-echo 3
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history  --sequential --dataset gigaspeech --split test --prev_utterances 6 --reset_history_on_pause --log_path ./results_history/GS_history_rsp_6.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history  --sequential --dataset gigaspeech --split test --prev_utterances 7 --reset_history_on_pause --log_path ./results_history/GS_history_rsp_7.txt
+for k in $(seq "$START_UTTERANCES" "$END_UTTERANCES"); do
+  echo "${k}/${END_UTTERANCES} on librispeech"
+  CUDA_VISIBLE_DEVICES="$GPU_ID" "$PYTHON_BIN" eval_hf.py \
+    --use_history --sequential \
+    --dataset librispeech --split test-other \
+    --whisper_model "$WHISPER_MODEL" \
+    --prev_utterances "$k" \
+    --uppercase_history \
+    --log_path "$OUT_DIR/${LOG_PREFIX}LS_history_caps_${k}.txt"
+done
+echo "Finished librispeech"
 
-echo 4
-
-
-
-
-
-
-
-
-
-
-
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset tedlium3 --split test --prev_utterances 0 --log_path ./results_history/ted_history_0.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential --dataset tedlium3 --split test --prev_utterances 1 --log_path ./results_history/ted_history_1.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset tedlium3 --split test --prev_utterances 2  --log_path ./results_history/ted_history_2.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset tedlium3 --split test --prev_utterances 3  --log_path ./results_history/ted_history_3.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset tedlium3 --split test --prev_utterances 4  --log_path ./results_history/ted_history_4.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history  --sequential --dataset tedlium3 --split test --prev_utterances 5  --log_path ./results_history/ted_history_5.txt
-
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset tedlium3 --split test --prev_utterances 1 --reset_history_on_pause --log_path ./results_history/ted_history_rsp_1.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset tedlium3 --split test --prev_utterances 2 --reset_history_on_pause --log_path ./results_history/ted_history_rsp_2.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history --sequential  --dataset tedlium3 --split test --prev_utterances 3 --reset_history_on_pause --log_path ./results_history/ted_history_rsp_3.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history  --sequential --dataset tedlium3 --split test --prev_utterances 4 --reset_history_on_pause --log_path ./results_history/ted_history_rsp_4.txt
-CUDA_VISIBLE_DEVICES="2" python3.10 eval_hf.py --use_history  --sequential --dataset tedlium3 --split test --prev_utterances 5 --reset_history_on_pause --log_path ./results_history/ted_history_rsp_5.txt
-
-
-
+for k in $(seq "$START_UTTERANCES" "$END_UTTERANCES"); do
+  echo "${k}/${END_UTTERANCES} on gigaspeech"
+  CUDA_VISIBLE_DEVICES="$GPU_ID" "$PYTHON_BIN" eval_hf.py \
+    --use_history --sequential \
+    --dataset gigaspeech --split test \
+    --whisper_model "$WHISPER_MODEL" \
+    --prev_utterances "$k" \
+    --reset_history_on_pause \
+    --uppercase_history \
+    --log_path "$OUT_DIR/${LOG_PREFIX}GS_history_rsp_caps_${k}.txt"
+done
+echo "Finished gigaspeech"

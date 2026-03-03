@@ -517,6 +517,7 @@ def generate_with_whisper(
             sampling_rate=16_000,
         ).to(device=device, dtype=dtype)
 
+
         if prompt_ids is not None:
             cur_prompt_ids = prompt_ids[processed:processed + max_batch_size]
             cur_prompt_ids = [el.to(device=device) for el in cur_prompt_ids]
